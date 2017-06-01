@@ -33,43 +33,43 @@ REF=/ufrc/salemi/tpaisie/cholera/ref_seq/v_cholerae_o1_2010el_1786.fa
 export _JAVA_OPTIONS="-Xms1g -Xmx10g"
 
 # index bam files if they are not indexed
-#for i in *.bam
-	#do
-		#samtools index ${i}
-	#done
+for i in *.bam
+	do
+		samtools index ${i}
+	done
 
 
 # step 1 - call variants from each sample using Haplotype Caller
-#for i in $(ls *.bam | rev | cut -c 5- | rev | uniq)
-	#do
-		#GenomeAnalysisTK -T HaplotypeCaller -R $REF -I ${i}.bam -o ${i}.vcf -ploidy 1
-	#done
+for i in $(ls *.bam | rev | cut -c 5- | rev | uniq)
+	do
+		GenomeAnalysisTK -T HaplotypeCaller -R $REF -I ${i}.bam -o ${i}.vcf -ploidy 1
+	done
 
 
 
 # step 2 - extract SNPs and Indels from each vcf file
 # extracts SNPS
-#for i in $(ls *.vcf | rev | cut -c 5- | rev | uniq)
-	#do 
-		#GenomeAnalysisTK -T SelectVariants -R $REF -V ${i}.vcf -selectType SNP -o snps_${i}.vcf 
-		#GenomeAnalysisTK -T SelectVariants -R $REF -V ${i}.vcf -selectType INDEL -o indels_${i}.vcf
-	#done
+for i in $(ls *.vcf | rev | cut -c 5- | rev | uniq)
+	do 
+		GenomeAnalysisTK -T SelectVariants -R $REF -V ${i}.vcf -selectType SNP -o snps_${i}.vcf 
+		GenomeAnalysisTK -T SelectVariants -R $REF -V ${i}.vcf -selectType INDEL -o indels_${i}.vcf
+	done
 
 
 
 # step 3 - filter the SNP and Indel files
 # filters the SNP vcf
-#for i in $(ls snps_*.vcf | rev | cut -c 5- | rev | uniq)
-	#do
+for i in $(ls snps_*.vcf | rev | cut -c 5- | rev | uniq)
+	do
 		
-		#GenomeAnalysisTK -T VariantFiltration -R $REF -V ${i}.vcf --filterExpression 'QD < 2.0 || FS > 60.0 || MQ < 40.0 || MQRankSum < -12.5 || ReadPosRankSum < -8.0 || SOR > 4.0' --filterName "basic_snp_filter" -o ${i}_filtered.vcf
-	#done
+		GenomeAnalysisTK -T VariantFiltration -R $REF -V ${i}.vcf --filterExpression 'QD < 2.0 || FS > 60.0 || MQ < 40.0 || MQRankSum < -12.5 || ReadPosRankSum < -8.0 || SOR > 4.0' --filterName "basic_snp_filter" -o ${i}_filtered.vcf
+	done
 
 # filters the Indel vcf
-#for i in $(ls indels_*.vcf | rev | cut -c 5- | rev | uniq)
-	#do
-		#GenomeAnalysisTK -T VariantFiltration -R $REF -V ${i}.vcf --filterExpression 'QD < 2.0 || FS > 200.0 || ReadPosRankSum < -20.0 || SOR > 10.0' --filterName "basic_indel_filter" -o ${i}_filtered.vcf
-	#done
+for i in $(ls indels_*.vcf | rev | cut -c 5- | rev | uniq)
+	do
+		GenomeAnalysisTK -T VariantFiltration -R $REF -V ${i}.vcf --filterExpression 'QD < 2.0 || FS > 200.0 || ReadPosRankSum < -20.0 || SOR > 10.0' --filterName "basic_indel_filter" -o ${i}_filtered.vcf
+	done
 
 
 
