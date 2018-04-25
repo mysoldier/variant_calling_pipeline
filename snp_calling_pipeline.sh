@@ -7,8 +7,8 @@
 #SBATCH --output=out_snp_calling_pipeline_test_log_%j
 #SBATCH --nodes=1
 #SBATCH --ntasks=8
-#SBATCH --mem=30gb
-#SBATCH --time=96:00:00
+#SBATCH --mem=5gb
+#SBATCH --time=90:00:00
 
 #**********************************************#
 
@@ -19,137 +19,72 @@
 
 #**********************************************#
 
-
-
-
+module load intel/2016.0.109 
+module load openmpi/1.10.2
+module load gcc/5.2.0
+module load parallel
 module load gatk
-module load samtools
-module load freebayes
-module load htslib
-module load bcftools
 module load vcflib
-module load python
+module load bcftools
+module load samtools
+module load htslib
 
 
-REF=/ufrc/salemi/tpaisie/cholera/ref_seq/v_cholerae_o1_2010el_1786.fa
+REF=/ufrc/salemi/tpaisie/javiana/refseq/NC_020307.fa
+#REF=/ufrc/salemi/tpaisie/cholera/ref_seq/v_cholerae_o1_2010el_1786.fa
 
 export _JAVA_OPTIONS="-Xms1g -Xmx10g"
 
-# index bam files if they are not indexed
-for i in *.bam
-	do
-		samtools index ${i}
-	done
-
-
-# step 1 - call variants from each sample using Haplotype Caller
-for i in $(ls *.bam | rev | cut -c 5- | rev | uniq)
-	do
-		GenomeAnalysisTK -T HaplotypeCaller -R $REF -I ${i}.bam -o ${i}.vcf -ploidy 1
-	done
-
-
+#VCFFILE=$1
 
 # step 2 - extract SNPs and Indels from each vcf file
 # extracts SNPS
-for i in $(ls *.vcf | rev | cut -c 5- | rev | uniq)
-	do 
-		GenomeAnalysisTK -T SelectVariants -R $REF -V ${i}.vcf -selectType SNP -o ${i}_snps.vcf 
-	done
+gatk SelectVariants -R $REF -V ${VCFFILE} --select-type-to-include SNP -O snps_${VCFFILE}
 
-# extracts Indels
-for i in $(ls *.vcf | rev | cut -c 5- | rev | uniq)
-	do
-		GenomeAnalysisTK -T SelectVariants -R $REF -V ${i}.vcf -selectType INDEL -o ${i}_indels.vcf
-	done
-
-
+gatk SelectVariants -R $REF -V ${VCFFILE} --select-type-to-include INDEL -O indels_${VCFFILE}
 
 # step 3 - filter the SNP and Indel files
 # filters the SNP vcf
-for i in $(ls *_snps.vcf | rev | cut -c 10- | rev | uniq)
-	do
-		GenomeAnalysisTK -T VariantFiltration -R $REF -V ${i}_snps.vcf --filterExpression 'QD < 2.0 || FS > 60.0 || MQ < 40.0 || MQRankSum < -12.5 || ReadPosRankSum < -8.0 || SOR > 4.0' --filterName "basic_snp_filter" -o ${i}_snps_filtered.vcf
-	done
+gatk VariantFiltration -R $REF -V snps_${VCFFILE} --filter-expression 'QD < 2.0 || FS > 60.0 || MQ < 40.0 || MQRankSum < -12.5 || ReadPosRankSum < -8.0 || SOR > 4.0' --filter-name "basic_snp_filter" -O filtered_snps_${VCFFILE}
 
-# filters the Indel vcf
-for i in $(ls *_indels.vcf | rev | cut -c 12- | rev | uniq)
-	do
-		GenomeAnalysisTK -T VariantFiltration -R $REF -V ${i}_indels.vcf --filterExpression 'QD < 2.0 || FS > 200.0 || ReadPosRankSum < -20.0 || SOR > 10.0' --filterName "basic_indel_filter" -o ${i}_indels_filtered.vcf
-	done
-
+gatk VariantFiltration -R $REF -V indels_${VCFFILE} --filter-expression 'QD < 2.0 || FS > 200.0 || ReadPosRankSum < -20.0 || SOR > 10.0' --filter-name "basic_indel_filter" -O filtered_indels_${VCFFILE}
 
 
 # step 4 - BQSR #1
-for i in $(ls *.bam | rev | cut -c 5- | rev | uniq)
-	do
-		GenomeAnalysisTK -T BaseRecalibrator -R $REF -I ${i}.bam -knownSites ${i}_snps_filtered.vcf -knownSites ${i}_indels_filtered.vcf -o ${i}.table
-	done
-
-
-# step 5 - BQSR #2
-for i in $(ls *.bam | rev | cut -c 5- | rev | uniq)
-	do
-		GenomeAnalysisTK -T BaseRecalibrator -R $REF -I ${i}.bam -knownSites ${i}_snps_filtered.vcf -knownSites ${i}_indels_filtered.vcf -BQSR ${i}.table -o post_${i}.table
-	done
-
+parallel 'gatk BaseRecalibrator -R /ufrc/salemi/tpaisie/cholera/ref_seq/v_cholerae_o1_2010el_1786.fa -I {}.bam --known-sites filtered_snps_javiana_uncal_041418.vcf --known-sites filtered_indels_javiana_uncal_041418.vcf -O {}.table' ::: $(ls *.bam | rev | cut -c 5- | rev | uniq)
 
 
 # step 6 - Analyze the BQSR reports from the base recalibration steps (steps 4 & 5)
-for i in $(ls *.table | rev | cut -c 7- | rev | uniq)
-	do
-		GenomeAnalysisTK -T AnalyzeCovariates -R $REF -before ${i}.table -after post_${i}.table -l DEBUG -csv post_${i}.csv -plots post_${i}.pdf
-		Rscript BQSR.R post_${i}.csv ${i}.table post_${i}.pdf 
-	done
+parallel 'gatk ApplyBQSR -R /ufrc/salemi/tpaisie/cholera/ref_seq/v_cholerae_o1_2010el_1786.fa -I {}.bam --bqsr-recal-file {}.table -O recal_{}.bam' ::: $(ls *.bam | rev | cut -c 5- | rev | uniq)
 
 
-# make directory for original bam files
-mkdir original_bams
 
-# step 7 - applying the base recalibration scores to the bam files
-for i in $(ls *.bam | rev | cut -c 5- | rev | uniq)
-	do
-		GenomeAnalysisTK -T PrintReads -R $REF -I ${i}.bam -BQSR ${i}.table -o ${i}_recal.bam
-		mv ${i}.bam original_bams/
-	done
-
-
-# step 8 - rename bam files (if you want) and call variants with freebayes
-#renaming recalibrated bam files
-for i in $(ls *_recal.bam | rev | cut -c 11- | rev | uniq)
-	do
-		mv ${i}_recal.bam ${i}.bam
-		mv ${i}_recal.bai ${i}.bai
-	done
-
-
-LIST=all_O1_inaba
+LIST=$1
 #calling variants on recalibrated bam files (will have only one vcf file as the output)
-freebayes -L ${LIST}.txt -v ${LIST}.vcf -f $REF -T 0.001 -p 1 -i -X -n 0 -E 3 --min-repeat-size 5 -m 1 -q 20 -R 0 -Y 0 -e 1000 -F 0.5 -C 2 -3 0 -G 1 -! 0
+freebayes -L ${LIST}.txt -v ${LIST}.vcf -f $REF 0.001 -p 1 -i -X -n 0 -E 3 --min-repeat-size 5 -m 1 -q 20 -R 0 -Y 0 -e 1000 -F 0.5 -C 2 -3 0 -G 1 -! 0
 
 
 # step 9 - filter vcf file from freebayes for SNPs only
-vcffilter -f "TYPE = snp" vch1786_allO1_fb_051717.vcf > vch1786_allO1_snps_051817.vcf
+vcffilter -f "TYPE = snp" ${LIST}.vcf > snps_${LIST}.vcf
 
 
 # step 10 - compressing and indexing the snp only vcf file & variant normalization of the snp only vcf file & decompressing the vcf file
 
 #compress vcf
-bgzip vch1786_allO1_snps_051817.vcf
+bgzip snps_${LIST}.vcf
 
 #index vcf
-tabix -p vcf vch1786_allO1_snps_051817.vcf.gz
+tabix -p vcf snps_${LIST}.vcf.gz
 
 # normalizing the variant vcf file
-bcftools norm -f $REF -o vch1786_allO1_norm_051817.vcf.gz vch1786_allO1_snps_051817.vcf.gz
+bcftools norm -f $REF -o norm_${LIST}.vcf.gz snps_${LIST}.vcf.gz
 
 #decompresses the output variant normalized file
-bgzip -d vch1786_allO1_norm_051817.vcf.gz
-
+bgzip -d norm_${LIST}.vcf.gz
 
 
 # step 11 - filter normalized vcf file and create SNP alignment fasta file
-bash vcflib_pipeline_HPC2.sh vch1786_allO1_norm_051817.vcf
+bash vcflib_pipeline_HPC2.sh norm_${LIST}.vcf
 
 
 
